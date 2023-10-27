@@ -9,8 +9,8 @@ public with sharing class BillBatch implements Database.Batchable<sObject>, Data
         //Hint: be sure to escape the single quotes surrounding \'Yes\' in your dynamic query!
         //query for the following fields:
         //Id, Bill_By_Email__c
-
-
+    String query = 'SELECT Id, Bill_By_Email__c FROM Account WHERE Active__c = \'Yes\' AND Bill_By_Email__c != null';
+    return Database.getQueryLocator(query);
     }
 
     public void execute(Database.BatchableContext bc, List<Account> scope){
@@ -18,10 +18,13 @@ public with sharing class BillBatch implements Database.Batchable<sObject>, Data
         //a list of account Ids (this.receivesBillByEmail) to carry over to the finish method.
         //we will do this by iterating over scope and checking whether Bill_By_Email__c == TRUE.
         //This method will also call our BillAPI.getBills() method.
-
-
+		for (Account acc : scope) {
+            if (acc.Bill_By_Email__c == true) {
+                receivesBillByEmail.add(acc.Id);
+            }
+ 		BillAPI.getBills();
     }
-
+    }
     public void finish(Database.BatchableContext bc){
         //this is the final method of the class, that will be called after all processing in the
         //start and execute methods is complete. We will use this method to send an email to each
@@ -30,15 +33,41 @@ public with sharing class BillBatch implements Database.Batchable<sObject>, Data
         //[SELECT Id, (SELECT Id FROM Bills__r ORDER BY CreatedDate DESC) FROM Account WHERE Id IN :this.receivesBillByEmail]
 
  
-        
         //We will then iterate over the results of this query and associate the Id of the most recent bill (value) with the
         //corresponding Id of the account Id (key) in a Map<Id, Id> that we will call billMap, using the .put(Id, Id)
         //method of the Map class:
         //https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_methods_system_map.htm
         //we will also create a Map<Id, String> called emailMap, where we'll hold the Account Id (key) and account email (value).
 
+ 		Map<Id, Id> billMap =new Map<Id, Id>();
+     	Map<Id, String> emailMap=new Map<Id, String>();
+     
+       for (Account acc : [SELECT Id, (SELECT Id FROM Bills__r ORDER BY CreatedDate DESC) FROM Account WHERE Id IN :receivesBillByEmail]) {
+        List<Bill__c> bills = acc.Bills__r;
+        if (!bills.isEmpty()) {
+            billMap.put(acc.Id, bills[0].Id);
+            emailMap.put(acc.Id, acc.Email__c);
+        }
+    }
 
+    // Prepare to send emails with bills
+    Map<String, Blob> sendMap = new Map<String, Blob>();
 
+    for (Id accountId : billMap.keySet()) {
+        String email = emailMap.get(accountId);
+        Id billId = billMap.get(accountId);
+
+        // Generate PDF for each bill
+        PageReference pageRef = Page.BillVFP;
+        pageRef.getParameters().put('id', billId);
+        Blob pdfBlob = pageRef.getContentAsPDF();
+
+        sendMap.put(email, pdfBlob);
+    }
+
+    // Call the BillEmailer.sendEmails method to send the emails with bills
+    BillEmailer.sendEmails(sendMap);
+}
         //Next, we are going to prepare to call our BillEmailer.sendEmails(Map<String, Blob> emailsWithBills)
         //method. The String in the map, which we'll call sendMap,will be the Account.Email__c field result, and the Blob
         //will be the PDF attachment we are sending. We will achieve this by iterating over the keyset for
@@ -55,4 +84,3 @@ public with sharing class BillBatch implements Database.Batchable<sObject>, Data
 
 
     }
-}
